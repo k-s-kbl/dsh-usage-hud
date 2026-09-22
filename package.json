@@ -2,7 +2,7 @@
   "name": "@local/dsh-usage-hud",
   "version": "1.0.0",
   "private": true,
-  "description": "Live usage HUD for the DSH Web GUI: API account balance, prompt-cache hit rate, context occupancy, and token consumption.",
+  "description": "DSH 网页版的实时用量看板：API 余额、缓存命中率、上下文占用、Token 消耗与预估费用。",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

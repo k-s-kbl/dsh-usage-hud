@@ -22,7 +22,7 @@
  *   node install.mjs --uninstall [--profile web] [--dsh-home <dir>]
  */
 import { createHash } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -47,15 +47,15 @@ const INSTALLED_FILES = ['package.json', 'cordis.patch.yml', join('lib', 'index.
  */
 export function parseArgs(argv) {
   const withValue = new Set(['--profile', '--dsh-home', '--source'])
-  const options = { profile: 'web', dshHome: undefined, source: HERE, uninstall: false, force: false, help: false }
+  const options = { profile: undefined, dshHome: undefined, source: HERE, uninstall: false, force: false, help: false }
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--uninstall') { options.uninstall = true; continue }
     if (arg === '--force') { options.force = true; continue }
     if (arg === '--help' || arg === '-h') { options.help = true; continue }
-    if (!withValue.has(arg)) throw new Error(`unknown option ${arg} (try --help)`)
+    if (!withValue.has(arg)) throw new Error(`未知参数 ${arg}（试试 --help）`)
     const value = argv[index + 1]
-    if (value === undefined || value.startsWith('--')) throw new Error(`${arg} needs a value`)
+    if (value === undefined || value.startsWith('--')) throw new Error(`${arg} 后面缺少取值`)
     index += 1
     if (arg === '--profile') options.profile = value
     if (arg === '--dsh-home') options.dshHome = resolve(value)
@@ -74,6 +74,34 @@ export function resolveDshHome(explicit) {
   const fromEnv = process.env.DSH_HOME
   if (typeof fromEnv === 'string' && fromEnv.length > 0) return resolve(fromEnv)
   return join(homedir(), '.dsh')
+}
+
+/**
+ * Resolve the profile to install into, without making the user name it.
+ *
+ * `web` is the profile the Web GUI uses and the one this plugin is for, so it
+ * wins whenever it exists. A harness home that has never served the Web GUI has
+ * no `web` directory, and then a single profile is unambiguous. Only a home
+ * with several non-`web` profiles is genuinely ambiguous, and only that case
+ * still asks for `--profile`.
+ * @param dshHome - harness home.
+ * @param explicit - `--profile`, when given.
+ * @returns the profile name.
+ * @throws when no profile exists, or when several do and none is `web`.
+ */
+export function resolveProfile(dshHome, explicit) {
+  if (explicit !== undefined) return explicit
+  const profilesDir = join(dshHome, 'profiles')
+  if (!existsSync(profilesDir)) throw new Error(`dsh 主目录里没有 profiles 文件夹：${profilesDir}`)
+  const names = readdirSync(profilesDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && entry.name !== 'node_modules' && !entry.name.startsWith('.'))
+    .map((entry) => entry.name)
+  if (names.includes('web')) return 'web'
+  if (names.length === 1) return names[0]
+  if (names.length === 0) {
+    throw new Error(`${profilesDir} 下没有任何 profile；先运行一次 \`dsh --profile web\` 再装`)
+  }
+  throw new Error(`发现多个 profile（${names.join('、')}）；用 --profile <名字> 指定要装进哪一个`)
 }
 
 /** Quote a value as a single-quoted YAML scalar. */
@@ -245,6 +273,32 @@ export function removeManagedBlock(text) {
 }
 
 /**
+ * Count the plugin rows a patch text declares, for the guard and for the
+ * post-write check.
+ *
+ * The one subtlety is a document that is not a patch list at all, which is what
+ * a layer reduced to its own comments parses to — `yaml.parse` returns `null`
+ * there. `countRows` reports that as -1, but to both callers it means "no plugin
+ * rows": reading it as "a row I did not write" made the installer refuse every
+ * run after the first, because `upsertManagedBlock` replaces a bare `[]` with
+ * the managed block and so leaves exactly that comments-only layer behind.
+ * @param text - patch text.
+ * @param yaml - parser or undefined.
+ * @returns the number of plugin rows declared, 0 through n.
+ */
+export function countPluginRows(text, yaml) {
+  if (yaml === undefined) {
+    return text.split('\n').filter((line) => new RegExp(`^-?\\s*id:\\s*${ROW_ID}\\s*$`).test(line.trim())).length
+  }
+  try {
+    const rows = countRows(yaml.parse(text))
+    return rows === -1 ? 0 : rows
+  } catch {
+    return 0
+  }
+}
+
+/**
  * Rewrite the patch layer so it declares exactly one plugin row.
  * @param patchPath - the profile's `cordis.patch.yml`.
  * @param name - the `file:` URL the row should mount.
@@ -258,11 +312,11 @@ export function writePatchRow(patchPath, name, options) {
   if (!existsSync(backup)) copyFileSync(patchPath, backup)
 
   let body = stripManaged(original)
-  if (countRowsUnsafe(body, options.yaml) !== 0) {
+  if (countPluginRows(body, options.yaml) !== 0) {
     if (!options.force) {
       throw new Error(
-        `an unmanaged "${ROW_ID}" row already exists in ${patchPath}.\n` +
-        'Remove it by hand (or re-run with --force to replace it), then install again.',
+        `${patchPath} 里已经有一条不是本安装器写的「${ROW_ID}」行。\n` +
+        '请手动删掉它（或者加 --force 让安装器覆盖它），然后重新安装。',
       )
     }
     body = stripPluginRows(body)
@@ -273,30 +327,12 @@ export function writePatchRow(patchPath, name, options) {
   writeFileSync(staging, next, 'utf8')
   renameSync(staging, patchPath)
 
-  const rows = countRowsUnsafe(readFileSync(patchPath, 'utf8'), options.yaml)
+  const rows = countPluginRows(readFileSync(patchPath, 'utf8'), options.yaml)
   if (options.yaml !== undefined && rows !== 1) {
     copyFileSync(backup, patchPath)
-    throw new Error(`the patched layer did not validate (${rows} plugin rows); restored ${backup}`)
+    throw new Error(`改完的补丁层没通过校验（有 ${rows} 条本插件的行）；已还原 ${backup}`)
   }
   return rows
-}
-
-/**
- * Count rows without a parser, used only to decide whether a hand-written row
- * is present. Falls back to the parser when one is available.
- * @param text - patch text.
- * @param yaml - parser or undefined.
- * @returns the row count, or a text-based estimate without a parser.
- */
-function countRowsUnsafe(text, yaml) {
-  if (yaml !== undefined) {
-    try {
-      return countRows(yaml.parse(text))
-    } catch {
-      return 0
-    }
-  }
-  return text.split('\n').filter((line) => new RegExp(`^-?\\s*id:\\s*${ROW_ID}\\s*$`).test(line.trim())).length
 }
 
 /**
@@ -308,10 +344,14 @@ function countRowsUnsafe(text, yaml) {
 export function installFiles(source, dshHome) {
   for (const relative of INSTALLED_FILES) {
     if (!existsSync(join(source, relative))) {
-      throw new Error(`the checkout is incomplete: ${relative} is missing (run this script from the repository root)`)
+      throw new Error(`源码不完整：缺少 ${relative}（请在仓库根目录运行本脚本）`)
     }
   }
   const target = join(dshHome, 'plugins', INSTALL_DIRNAME)
+  // Cloning straight into `$DSH_HOME/plugins/dsh-usage-hud` is a reasonable
+  // thing for a user to do, and there the source *is* the target. Copying a
+  // file onto itself is at best pointless, so the files are left alone.
+  if (resolve(source) === resolve(target)) return target
   for (const relative of INSTALLED_FILES) {
     const destination = join(target, relative)
     mkdirSync(dirname(destination), { recursive: true })
@@ -335,16 +375,16 @@ export function revisionOf(target) {
   return hash.digest('hex').slice(0, 12)
 }
 
-/** Print what to do after installing. */
+/** 打印安装完成后的操作提示。 */
 function printNextSteps(profile, dshHome) {
   const origin = process.env.DSH_WEB_URL ?? 'http://127.0.0.1:3080'
   console.log('')
-  console.log('Next:')
-  console.log(`  1. reload the page at ${origin} — the browser roster is composed at boot`)
-  console.log(`  2. confirm it attached:  curl ${origin}/api/usage-hud/status`)
+  console.log('接下来：')
+  console.log(`  刷新这个页面就能看到看板：${origin}`)
+  console.log('  （浏览器只在启动时读一次 __DSH_BOOT__，所以必须刷新，不是重装。）')
   console.log('')
-  console.log(`If the panel does not appear after a reload, restart \`dsh --profile ${profile}\` once.`)
-  console.log(`Uninstall at any time:  node install.mjs --uninstall --dsh-home "${dshHome}"`)
+  console.log(`刷新后如果没出现看板，把 \`dsh --profile ${profile}\` 重启一次。`)
+  console.log(`想卸载：  node install.mjs --uninstall --dsh-home "${dshHome}"`)
 }
 
 /**
@@ -355,21 +395,29 @@ function printNextSteps(profile, dshHome) {
 export function main(argv) {
   const options = parseArgs(argv)
   if (options.help) {
-    console.log('Install dsh-usage-hud into a DeepSeek Harness profile.\n')
-    console.log('  node install.mjs [--profile web] [--dsh-home <dir>] [--source <dir>] [--force]')
-    console.log('  node install.mjs --uninstall [--profile web] [--dsh-home <dir>]')
-    console.log('\nDefaults: profile "web", harness home $DSH_HOME or ~/.dsh, source alongside this script.')
+    console.log('把 dsh-usage-hud（DSH 网页版用量看板）装进一个 dsh profile。\n')
+    console.log('  node install.mjs                              # 零参数：自动找 dsh 主目录和 profile')
+    console.log('  node install.mjs [--profile web] [--dsh-home <目录>] [--source <目录>] [--force]')
+    console.log('  node install.mjs --uninstall [--profile web] [--dsh-home <目录>]')
+    console.log('\n默认：主目录取 $DSH_HOME，没设则取 ~/.dsh；profile 优先用 web，其次用仅有的那一个；')
+    console.log('源码取本脚本所在目录。')
     return 0
   }
 
   const dshHome = resolveDshHome(options.dshHome)
-  if (!existsSync(dshHome)) throw new Error(`harness home not found: ${dshHome} (pass --dsh-home)`)
+  if (!existsSync(dshHome)) {
+    throw new Error(
+      `找不到 dsh 主目录：${dshHome}\n` +
+      '先用 --dsh-home <目录> 指定，或者先运行一次 dsh（让它把主目录建出来）。',
+    )
+  }
 
-  const profileDir = join(dshHome, 'profiles', options.profile)
+  const profile = resolveProfile(dshHome, options.profile)
+  const profileDir = join(dshHome, 'profiles', profile)
   if (!existsSync(profileDir)) {
     throw new Error(
-      `profile "${options.profile}" not found at ${profileDir}\n` +
-      `Start it once (\`dsh --profile ${options.profile}\`) so the launcher creates it, or pass --profile <name>.`,
+      `找不到 profile「${profile}」：${profileDir}\n` +
+      `先运行一次 \`dsh --profile ${profile}\` 让启动器把它建出来，或用 --profile <名字> 指定。`,
     )
   }
   const patchPath = join(profileDir, PATCH_FILENAME)
@@ -383,13 +431,15 @@ export function main(argv) {
     const backup = `${patchPath}.bak-dsh-usage-hud`
     if (!existsSync(backup)) copyFileSync(patchPath, backup)
     const next = removeManagedBlock(original)
-    if (yaml !== undefined && countRows(yaml.parse(next)) !== 0) throw new Error('refusing to write a layer that still declares the plugin')
+    if (yaml !== undefined && countRows(yaml.parse(next)) !== 0) {
+      throw new Error('补丁层里还留着本插件的行，拒绝写入（原文件未改动）')
+    }
     writeFileSync(patchPath, next, 'utf8')
     rmSync(target, { recursive: true, force: true })
-    console.log(`Uninstalled from profile "${options.profile}".`)
-    console.log(`  removed the loader row from ${patchPath}`)
-    console.log(`  deleted ${target}`)
-    console.log('Reload the page to drop the panel.')
+    console.log(`已从 profile「${profile}」卸载。`)
+    console.log(`  已删除加载行：${patchPath}`)
+    console.log(`  已删除文件：${target}`)
+    console.log('刷新页面，看板就没了。')
     return 0
   }
 
@@ -398,12 +448,12 @@ export function main(argv) {
   const name = `${pathToFileURL(join(installed, 'lib', 'index.js')).href}?v=${revision}`
   writePatchRow(patchPath, name, { yaml, force: options.force })
 
-  console.log(`Installed ${PACKAGE}`)
-  console.log(`  files:    ${installed}`)
-  console.log(`  row:      ${patchPath}`)
-  console.log(`  revision: ${revision}`)
-  if (yaml === undefined) console.log('  note:     no YAML parser was found to validate the result; a backup was still written')
-  printNextSteps(options.profile, dshHome)
+  console.log(`已安装 ${PACKAGE}`)
+  console.log(`  文件：  ${installed}`)
+  console.log(`  加载行：${patchPath}`)
+  console.log(`  版本号：${revision}（由 lib/ 内容算出，改了代码它就会变，加载器才会重新导入）`)
+  if (yaml === undefined) console.log('  注意：  没找到 YAML 解析器，无法校验结果；原文件备份仍然写了')
+  printNextSteps(profile, dshHome)
   return 0
 }
 
@@ -412,7 +462,7 @@ if (invokedDirectly) {
   try {
     process.exitCode = main(process.argv.slice(2))
   } catch (error) {
-    console.error(`install: ${error.message}`)
+    console.error(`安装失败：${error.message}`)
     process.exitCode = 1
   }
 }

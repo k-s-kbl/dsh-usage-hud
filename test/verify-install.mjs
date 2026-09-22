@@ -11,7 +11,8 @@
  *   3. the row's combo script really serves this package's client bundle,
  *   4. the host half's balance route answers with a well-formed payload.
  *
- * The secret is read from disk and never printed.
+ * The secret is read from disk and never printed. The harness home is
+ * `$DSH_HOME` when set, otherwise `~/.dsh`.
  *
  * Usage: `node test/verify-install.mjs [http://127.0.0.1:3080] [--cookie-file <path>]`
  *
@@ -37,9 +38,14 @@ const checks = []
 const check = (label, ok) => checks.push([label, ok === true])
 
 // ── mint the browser session cookie ─────────────────────────────────────────
-const require = createRequire(join(homedir(), '.dsh', 'profiles', 'node_modules', 'x.js'))
+// The harness home is `$DSH_HOME` when it is set: that variable *is* the home
+// directory, not a parent of it. Hard-coding `~/.dsh` minted a cookie from the
+// wrong home's secret on any machine whose operator moved the home elsewhere,
+// and the server rejected it with a bare 401.
+const home = process.env.DSH_HOME ?? join(homedir(), '.dsh')
+const require = createRequire(join(home, 'profiles', 'node_modules', 'x.js'))
 const YAML = require('yaml')
-const credentials = YAML.parse(readFileSync(join(homedir(), '.dsh', '.credentials.yaml'), 'utf8'))
+const credentials = YAML.parse(readFileSync(join(home, '.credentials.yaml'), 'utf8'))
 const record = credentials?.records?.['client-connection/browser-session']
 const storedSecret = record?.payload?.secret
 if (typeof storedSecret !== 'string' || storedSecret.length === 0) throw new Error('no stored browser-session secret; open the GUI through its launch URL first')

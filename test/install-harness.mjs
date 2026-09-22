@@ -14,7 +14,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
-import { BEGIN, END, countRows, loadYaml, main, removeManagedBlock, revisionOf, stripPluginRows, upsertManagedBlock } from '../install.mjs'
+import { BEGIN, END, countPluginRows, countRows, loadYaml, main, removeManagedBlock, revisionOf, stripManaged, stripPluginRows, upsertManagedBlock } from '../install.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const SOURCE = join(HERE, '..')
@@ -77,6 +77,33 @@ const DEFAULT_LAYER = `# Your patch layer for this dsh profile, applied after ev
   check('removal leaves no plugin row', loadYamlFrom(removed) === 0)
   check('removing from a bare [] layer is a no-op array', removeManagedBlock('[]\n').trim() === '[]')
   check('removing twice is stable', removeManagedBlock(removeManagedBlock(installed)) === removed)
+}
+
+// ── the guard, with a parser present ───────────────────────────────────────
+// The throwaway homes below never carry a `yaml` module, so every end-to-end
+// check above runs the parser-less text path. The realistic install does have
+// one, and that path had a bug worth pinning: after the first install the layer
+// is its own comments plus the managed block, and stripping the block leaves a
+// document that parses to `null` — which `countRows` reports as -1. Reading that
+// as "a row I did not write" refused every run after the first.
+{
+  /** A stub parser: a patch list only when an `insert` entry is present. */
+  const stubYaml = {
+    parse: (text) => (text.split('\n').some((line) => /^\s*-\s*insert:\s*$/.test(line)) ? [{ insert: [{ id: 'usage-hud', name: 'x' }] }] : null),
+  }
+  check('a layer reduced to its own comments declares zero rows', countPluginRows('# just a comment\n', stubYaml) === 0)
+  check('an empty layer declares zero rows', countPluginRows('[]\n', { parse: () => [] }) === 0)
+  check('a hand-written row is still counted', countPluginRows('- insert:\n    - id: usage-hud\n      name: x\n', stubYaml) === 1)
+  check('a document that is not a list declares zero rows', countPluginRows('null\n', stubYaml) === 0)
+  check('unparseable text declares zero rows', countPluginRows('- [unclosed\n', { parse: () => { throw new Error('bad yaml') } }) === 0)
+
+  // The regression itself, through the real text surgery: the layer one install
+  // leaves behind must be installable again.
+  const afterFirst = upsertManagedBlock(DEFAULT_LAYER, 'file:///x/index.js?v=1')
+  const body = stripManaged(afterFirst)
+  check('what one install leaves, with the block stripped, is comments only',
+    body.split('\n').every((line) => line.trim() === '' || line.trim().startsWith('#')))
+  check('and that leftover declares zero rows to the guard', countPluginRows(body, stubYaml) === 0)
 }
 
 // ── end to end against a throwaway harness home ─────────────────────────────
