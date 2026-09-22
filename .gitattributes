@@ -1,0 +1,5 @@
+# The plugin is authored with LF endings; keep them that way on every platform.
+* text=auto eol=lf
+
+# The screenshot is binary.
+*.png binary

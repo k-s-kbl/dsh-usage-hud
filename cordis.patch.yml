@@ -1,0 +1,6 @@
+# The usage-HUD bundle layer: one host row, which the client-modules node half
+# then resolves into the browser roster through this package's `dsh.client`
+# declaration. `id` is the panel's identity; `name` names the module to mount.
+- insert:
+    - id: usage-hud
+      name: '@local/dsh-usage-hud'

@@ -1,0 +1,38 @@
+{
+  "name": "@local/dsh-usage-hud",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live usage HUD for the DSH Web GUI: API account balance, prompt-cache hit rate, context occupancy, and token consumption.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "test": "node test/host-harness.mjs && node test/render-harness.mjs",
+    "test:host": "node test/host-harness.mjs",
+    "test:render": "node test/render-harness.mjs",
+    "verify:install": "node test/verify-install.mjs",
+    "verify:browser": "node test/browser-verify.mjs"
+  }
+}

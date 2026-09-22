@@ -1,0 +1,13 @@
+# Dependencies are never needed: both halves run on Node builtins and globals.
+node_modules/
+
+# Verification artefacts: the live checkers write a session cookie, a rendered
+# screenshot, and the headless browser's own logs. None of them belong in the
+# repository — the cookie in particular is a live credential.
+.cookie.json
+usage-hud.png
+*.edge-out.log
+*.edge-err.log
+
+# Installer staging.
+*.tmp-*

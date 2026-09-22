@@ -1,0 +1,28 @@
+# Your patch layer for this dsh profile, applied after every bundle layer:
+# a top-level YAML array of loader patch entries (id-targeted config
+# overrides, disables, and insert lists; `!!js` expressions allowed).
+#
+# usage-hud (added by the usage-HUD plugin install): the live usage panel.
+# Its host half owns the three read-only usage routes and the `usageCost`
+# session projection; its browser half ships through the package's `dsh.client`
+# export and reaches the shell through the recomposed window.__DSH_BOOT__ graph.
+#
+# `name` is a file URL carrying a build revision. The Loader re-imports a row
+# only when its `name`, `inject`, or `group` changes — a config-only edit just
+# patches the live fiber — so bump `?v=` to deploy a host-side change.
+#
+# Then CONFIRM it, with `GET /api/usage-hud/status`, which reports the revision
+# actually running. A reload is not guaranteed to be observed: the profile
+# patch watcher filters chokidar events by an exact path comparison, so an event
+# reported in a different form is dropped silently. If the status route still
+# reports the old revision after a few attempts, restart `dsh web`.
+#
+# The browser half needs neither trick: the host re-reads lib/client.js and
+# re-serves it under a content-addressed URL, so an edited bundle reaches the
+# page on the next reload.
+#
+# Remove this entry to uninstall; the original empty layer is saved beside this
+# file as cordis.patch.yml.bak-usage-hud.
+- insert:
+    - id: usage-hud
+      name: 'file:///D:/dsh的数据/plugins/dsh-usage-hud/lib/index.js?v=16'

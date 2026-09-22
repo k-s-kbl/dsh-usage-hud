@@ -1,0 +1,25 @@
+# Overlay for `$DSH_HOME/profiles/web/cordis.patch.yml`.
+#
+# Two ways to install this plugin:
+#
+# 1. Checkout path (no package manager, and how it is installed here). Merge the
+#    block below verbatim. The revision on the URL is load-bearing: the patch
+#    layer hot-reloads, but the Loader re-imports a row only when its `name`,
+#    `inject`, or `group` changes, so a revision-bearing URL is what lets a host
+#    edit reload in place. Bump `?v=` after editing lib/index.js. (An absolute
+#    or ./relative path also resolves — dsh anchors it against this patch file —
+#    but then a host edit needs a server restart.)
+#
+# 2. Installed package (needs pnpm) — merge the `insert` list below, or just:
+#
+#        dsh plugin --profile web add D:\dsh的数据\plugins\dsh-usage-hud
+#
+#    ...which appends the package to `dsh.profile.bundles`, so the package's own
+#    cordis.patch.yml supplies the row and nothing goes here.
+#
+# The browser half needs neither trick: the host re-reads lib/client.js and
+# re-serves it under a content-addressed URL. Either way, reload the page
+# afterwards, because the shell reads window.__DSH_BOOT__ once at boot.
+- insert:
+    - id: usage-hud
+      name: 'file:///D:/dsh的数据/plugins/dsh-usage-hud/lib/index.js?v=2'
